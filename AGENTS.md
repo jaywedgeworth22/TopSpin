@@ -137,3 +137,74 @@ append a handoff note to your PR description using this template:
   FK-typing — how each was preserved>
 - **Open questions**: <decisions needing a maintainer>
 ```
+
+## Cursor Cloud specific instructions
+
+Cloud Agent pods run **Linux**, so only the **web control center** (`apps/web/`)
+can be built/run/tested here. The Apple modules (`apple/**`) require macOS +
+Xcode and cannot be exercised in this environment — leave them to the `apple`
+CI job on `macos-26`.
+
+**Automatic startup (update script):** the environment auto-runs
+`npm ci --no-audit --no-fund` in `apps/web/`. The default `npm` (10.x) works
+fine on the current lockfile; CI pins npm 11 only as belt-and-suspenders, so
+you do not need to upgrade npm to run `npm ci` locally. Standard scripts live in
+`apps/web/package.json` (`dev`, `check`, `test`, `build`, `lint`, `db:*`).
+
+**MySQL is required even in demo mode.** Demo mode only *simulates* connector
+rotation calls — all data (connectors, secrets, targets, runs, audit) is still
+read from and written to MySQL. There is no in-memory fallback, so the app is
+blank/erroring without a database. Cloud pods do not ship MySQL persisted, so a
+fresh session must bring it up once:
+
+```bash
+# 1. Install + start MySQL 8 (only if `mysqladmin status` fails)
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq mysql-server
+sudo service mysql start            # NOT systemctl — pods have no systemd
+
+# 2. Create the dev database + user (idempotent)
+sudo mysql <<'SQL'
+CREATE DATABASE IF NOT EXISTS topspin CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER IF NOT EXISTS 'topspin'@'127.0.0.1' IDENTIFIED WITH caching_sha2_password BY 'topspin';
+GRANT ALL PRIVILEGES ON topspin.* TO 'topspin'@'127.0.0.1';
+FLUSH PRIVILEGES;
+SQL
+```
+
+**`apps/web/.env` is gitignored and not recreated by the update script** —
+create it once per fresh checkout (values below are dev-only, safe to commit
+nowhere). `DATABASE_URL` and `APP_ID`/`APP_SECRET` are only *enforced* when
+`NODE_ENV=production`, but `drizzle-kit` always needs `DATABASE_URL`:
+
+```
+DATABASE_URL=mysql://topspin:topspin@127.0.0.1:3306/topspin
+TOPSPIN_DEMO=true
+TOPSPIN_ENC_KEY=<openssl rand -hex 32>
+TOPSPIN_FILE_ROOT=./topspin-files
+APP_ID=topspin-dev
+APP_SECRET=topspin-dev-secret
+VITE_APP_ID=topspin-dev
+```
+
+Then create schema + demo data (both idempotent; `db:seed` no-ops when
+connectors already exist):
+
+```bash
+cd apps/web && npm run db:push && npm run db:seed
+```
+
+**Running:** `npm run dev` (from `apps/web/`) serves the whole stack — Vite
+frontend + Hono/tRPC backend (via `@hono/vite-dev-server`) + a 60s rotation
+scheduler — on `http://localhost:3000`. The console lives under unauthenticated
+routes: `/dashboard`, `/secrets`, `/connectors`, `/targets`, `/runs`, `/audit`
+(`/` and `/login` are marketing pages). Smoke-test the API without a browser:
+`curl 'http://localhost:3000/api/trpc/stats.overview?input=%7B%7D'`.
+
+**Gotchas:**
+- `npm run lint` currently reports pre-existing errors in committed shadcn/ui
+  components (`Math.random` purity, `react-refresh/only-export-components`). The
+  CI `web` job runs only `npm run check` + `npm run build`, **not** `lint`, so a
+  red `lint` is not a merge blocker — do not "fix" that vendored UI code as part
+  of unrelated work.
+- The installed `react@19.2.8` / `react-dom@19.2.3` version skew is harmless —
+  the app renders and rotates cleanly; do not bump react-dom to chase it.
