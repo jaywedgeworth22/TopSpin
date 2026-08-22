@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { encryptJson, decryptJson, fingerprint } from "./crypto";
-import { computeEntryHash, canonicalEntry, infisicalSecretName } from "./engine";
+import {
+  computeEntryHash,
+  canonicalEntry,
+  infisicalSecretName,
+  canaryDeliveryName,
+} from "./engine";
 import { renderUpdated } from "./files";
 import { parseGlobalApiKeys, serializeGlobalApiKeys } from "./env-parse";
 import { getConnector } from "./connectors";
@@ -68,6 +73,31 @@ describe("infisicalSecretName", () => {
   });
 });
 
+describe("canaryDeliveryName", () => {
+  it("never reuses the live Infisical or file key", () => {
+    expect(canaryDeliveryName("CLOUDFLARE_API_TOKEN")).toBe(
+      "CLOUDFLARE_API_TOKEN_CANARY",
+    );
+    expect(canaryDeliveryName("API_KEY")).toBe("API_KEY_CANARY");
+    expect(canaryDeliveryName("prod.aws_access_key_id")).toBe(
+      "prod.aws_access_key_id_CANARY",
+    );
+    expect(canaryDeliveryName("credentials.npmToken")).toBe(
+      "credentials.npmToken_CANARY",
+    );
+  });
+
+  it("does not double-suffix an already-canary name", () => {
+    expect(canaryDeliveryName("API_KEY_CANARY")).toBe("API_KEY_CANARY");
+    expect(canaryDeliveryName("  ")).toBe("SECRET_CANARY");
+  });
+
+  it("keeps the live name distinct from the canary even after #41 fallback", () => {
+    const live = infisicalSecretName({ secretName: "" }, "CLOUDFLARE_API_TOKEN");
+    expect(canaryDeliveryName(live)).not.toBe(live);
+  });
+});
+
 describe("file target renderers", () => {
   it("updates .env keys in place", () => {
     const out = renderUpdated(
@@ -76,6 +106,22 @@ describe("file target renderers", () => {
       "new-value",
     );
     expect(out).toBe("FOO=1\nAPI_KEY=new-value\n");
+  });
+
+  it("canary file key leaves the live .env value untouched", () => {
+    const live = "API_KEY=sk-live-keep\n";
+    const out = renderUpdated(
+      {
+        path: "x/.env",
+        format: "env",
+        key: canaryDeliveryName("API_KEY"),
+      },
+      live,
+      "topspin-canary-probe",
+    );
+    expect(out).toContain("API_KEY=sk-live-keep");
+    expect(out).toContain("API_KEY_CANARY=topspin-canary-probe");
+    expect(out).not.toMatch(/^API_KEY=topspin-canary-probe$/m);
   });
 
   it("appends missing .env keys", () => {

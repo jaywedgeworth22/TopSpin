@@ -70,6 +70,16 @@ export function infisicalSecretName(
   return named ? named : fallbackName;
 }
 
+/**
+ * Probe name used by targets.test.  A canary must never land on the live
+ * Infisical secret or file key — TopSpin does not keep the old plaintext,
+ * so overwriting the production slot is unrecoverable.
+ */
+export function canaryDeliveryName(liveName: string): string {
+  const base = liveName.trim() || "SECRET";
+  return /_CANARY$/i.test(base) ? base : `${base}_CANARY`;
+}
+
 // ── Hash-chained audit log ──────────────────────────────────────
 // entryHash = sha256(prevHash + canonical(entry))[0:16], genesis prevHash = "0"*16
 

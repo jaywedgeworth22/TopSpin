@@ -39,6 +39,8 @@ import {
   rotateSecret,
   appendAudit,
   verifyAuditChain,
+  infisicalSecretName,
+  canaryDeliveryName,
   RotationLockedError,
   SecretNotFoundError,
 } from "../topspin/engine";
@@ -437,19 +439,30 @@ export const targetsRouter = createRouter({
         switch (target.kind) {
           case "infisical": {
             const icfg = cfg as InfisicalTargetConfig;
+            const canaryName = canaryDeliveryName(
+              infisicalSecretName(icfg, secret?.name ?? "SECRET"),
+            );
             if (!isDemoMode() && hasInfisicalConfig(icfg)) {
-              await upsertSecret(icfg, icfg.secretName || `${secret?.name ?? "SECRET"}_CANARY`, canary);
-              message = "canary written to Infisical";
+              await upsertSecret(icfg, canaryName, canary);
+              message = `canary written to Infisical as ${canaryName}`;
             } else {
               const ms = await demoLatency();
-              message = demoMessage(`canary written to Infisical (simulated, ${ms}ms)`);
+              message = demoMessage(
+                `canary written to Infisical as ${canaryName} (simulated, ${ms}ms)`,
+              );
             }
             break;
           }
-          case "file":
-            await writeFileTarget(cfg as unknown as FileTargetConfig, canary);
-            message = `canary written to ${(cfg as { path?: string }).path}`;
+          case "file": {
+            const fcfg = cfg as unknown as FileTargetConfig;
+            const canaryCfg: FileTargetConfig = {
+              ...fcfg,
+              key: canaryDeliveryName(fcfg.key),
+            };
+            await writeFileTarget(canaryCfg, canary);
+            message = `canary written to ${canaryCfg.path} key ${canaryCfg.key}`;
             break;
+          }
           case "webhook": {
             const wcfg = cfg as unknown as WebhookTargetConfig;
             if (!isDemoMode() && wcfg.url) {
