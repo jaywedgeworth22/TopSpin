@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { encryptJson, decryptJson, fingerprint } from "./crypto";
-import { computeEntryHash, canonicalEntry, infisicalSecretName } from "./engine";
+import {
+  computeEntryHash,
+  canonicalEntry,
+  infisicalSecretName,
+  shouldMintProviderCredential,
+} from "./engine";
 import { renderUpdated } from "./files";
 import { parseGlobalApiKeys, serializeGlobalApiKeys } from "./env-parse";
 import { getConnector } from "./connectors";
@@ -38,6 +43,13 @@ describe("audit hash chain", () => {
     expect(computeEntryHash("0000000000000000", entry)).toBe(h1);
     expect(computeEntryHash("1111111111111111", entry)).not.toBe(h1);
     expect(canonicalEntry(entry)).toBe(canonicalEntry({ ...entry }));
+  });
+});
+
+describe("dry-run mint guard", () => {
+  it("never mints or revokes a provider credential during dry-run", () => {
+    expect(shouldMintProviderCredential(true)).toBe(false);
+    expect(shouldMintProviderCredential(false)).toBe(true);
   });
 });
 

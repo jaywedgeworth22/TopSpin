@@ -70,6 +70,17 @@ export function infisicalSecretName(
   return named ? named : fallbackName;
 }
 
+/**
+ * Dry-run / canary simulator must never mint or revoke a provider
+ * credential.  Cloudflare PUT /value and Slack auth.rotate invalidate
+ * the live token; Infisical source upserts a new value.  PUSH is skipped
+ * on dry-run, so a live mint here locks the owner out while the UI says
+ * no live state changed.
+ */
+export function shouldMintProviderCredential(dryRun: boolean): boolean {
+  return !dryRun;
+}
+
 // ── Hash-chained audit log ──────────────────────────────────────
 // entryHash = sha256(prevHash + canonical(entry))[0:16], genesis prevHash = "0"*16
 
@@ -345,17 +356,24 @@ export async function rotateSecret(
           `no connector registered for platform "${connectorRow?.platform ?? "?"}"`,
         );
       }
+      if (!shouldMintProviderCredential(dryRun)) {
+        // Keep the rest of the dry-run path (simulated PUSH/VERIFY) without
+        // calling a live rotate().  Placeholder never leaves this process.
+        newValue = "__topspin_dry_run_not_minted__";
+        return "[dry-run] skipped live mint — no provider credential created or revoked";
+      }
       const config = decryptJson(connectorRow.configEnc);
       const result = await connector.rotate(config);
       if (!result.value) throw new Error("connector returned no value");
       newValue = result.value;
-      const baseMsg = result.demo ? demoMessage(result.message) : result.message;
-      return dryRun ? `[dry-run] ${baseMsg}` : baseMsg;
+      return result.demo ? demoMessage(result.message) : result.message;
     });
 
     if (rotateOk && newValue) {
       const value: string = newValue;
-      newFp = fingerprint(value);
+      if (!dryRun) {
+        newFp = fingerprint(value);
+      }
 
       // 3. PUSH — every enabled target
       const targetRows = await db
